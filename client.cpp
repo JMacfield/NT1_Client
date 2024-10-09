@@ -1,11 +1,16 @@
-#include <iostream>
-#include <WinSock2.h>
-#include <WS2tcpip.h>
-#include <cstring>
-
-#pragma comment(lib, "ws2_32.lib")
+#define STRICT
 
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
+#define WIN32_LEAN_AND_MEAN
+
+#include <cstring>
+
+#include <iostream>
+
+#include <WinSock2.h>
+#include <WS2tcpip.h>
+
+#pragma comment(lib, "ws2_32.lib")
 
 int main(void)
 {
@@ -15,12 +20,15 @@ int main(void)
 	sockaddr_in server_addr;
 	char buffer[1024];
 
+	char server_ip[16];
+	int server_port;
+
 	// WinSockの初期化 //
 	std::cout << "WinSockを初期化..." << std::endl;
 
 	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
 	{
-		std::cerr << "失敗 エラーコード : " << WSAGetLastError() << std::endl;
+		std::cerr << "WinSockの初期化に失敗 エラーコード: " << WSAGetLastError() << std::endl;
 
 		return 1;
 	}
@@ -38,14 +46,41 @@ int main(void)
 	std::cout << "ソケットを作成" << std::endl;
 
 	// サーバのIPアドレスとポートをバインド //
+	std::cout << "接続先のサーバのIPを入力してください: ";
+	std::cin.getline(server_ip, 16);
+	std::cout << "接続先のサーバのポートを入力してください: ";
+	std::cin >> server_port;
+	std::cin.ignore();
+	
 	server_addr.sin_family = AF_INET;
-	InetPton(AF_INET, L"127.0.0.1", &server_addr.sin_addr.s_addr);
-	server_addr.sin_port = htons(8888);
+	server_addr.sin_port = htons(server_port);
+
+	wchar_t wc_server_ip[16];
+	size_t converted_chars = 0;
+
+	if (mbstowcs_s(&converted_chars, wc_server_ip, 16, server_ip, _TRUNCATE) != 0)
+	{
+		std::cerr << "IPアドレスの変換に失敗しました " << std::endl;
+		closesocket(clinet_socket);
+		WSACleanup();
+
+		return 1;
+	}
+
+	// IPアドレスをバイナリ形式に変換して設定
+	if (InetPton(AF_INET, wc_server_ip, &server_addr.sin_addr) <= 0)
+	{
+		std::cerr << "IPアドレスの設定に失敗しました" << std::endl;
+		closesocket(clinet_socket);
+		WSACleanup();
+
+		return 1;
+	}
 
 	// サーバに接続
 	if (connect(clinet_socket, (sockaddr*)&server_addr, sizeof(server_addr)) < 0)
 	{
-		std::cerr << "接続に失敗 エラーコード : " << WSAGetLastError() << std::endl;
+		std::cerr << "サーバ接続に失敗 エラーコード : " << WSAGetLastError() << std::endl;
 		closesocket(clinet_socket);
 		WSACleanup();
 
@@ -63,7 +98,7 @@ int main(void)
 		// quitを入力したら接続を終了
 		if (strcmp(buffer, "quit") == 0)
 		{
-			std::cout << "接続を終了" << std::endl;
+			std::cout << "サーバ接続を終了" << std::endl;
 			break;
 		}
 
@@ -74,7 +109,23 @@ int main(void)
 			break;
 		}
 
-		std::cout << "メッセージを送信..." << std::endl;
+		// メッセージの受信
+		int recv_size = recv(clinet_socket, buffer, 1024, 0);
+
+		if (recv_size == SOCKET_ERROR)
+		{
+			std::cerr << "メッセージの受信に失敗 エラーコード: " << WSAGetLastError() << std::endl;
+			break;
+		}
+		else if (recv_size == 0)
+		{
+			std::cout << "サーバが切断されました" << std::endl;
+			break;
+		}
+
+		buffer[recv_size] = '\0';
+
+		std::cout << "サーバからのメッセージ: " << buffer << std::endl;
 	}
 
 	// ソケットの終了
