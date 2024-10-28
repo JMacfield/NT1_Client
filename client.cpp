@@ -1,137 +1,175 @@
-#define STRICT
-
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
-#define WIN32_LEAN_AND_MEAN
-
-#include <cstring>
-
 #include <iostream>
+#include <winsock2.h>  
+#include <string>
 
-#include <WinSock2.h>
-#include <WS2tcpip.h>
+#pragma comment(lib, "WSock32.lib")
 
-#pragma comment(lib, "ws2_32.lib")
+void RunServer(u_short port);
+void RunClient(const char* server_ip, u_short port);
 
-int main(void)
+int main()
 {
-	// ネットワーク標準関数群 //
-	WSADATA wsa;
-	SOCKET clinet_socket;
-	sockaddr_in server_addr;
-	char buffer[1024];
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
+    {
+        printf("WinSockの初期化に失敗しました\n");
+        return 1;
+    }
 
-	char server_ip[16];
-	int server_port;
+    int mode;
+    printf("モードを選択してください (1: サーバー, 2: クライアント): ");
+    std::cin >> mode;
 
-	// WinSockの初期化 //
-	std::cout << "WinSockを初期化..." << std::endl;
+    if (mode == 1) // サーバーモード
+    {
+        u_short port;
+        printf("サーバーのポート番号を入力してください: ");
+        std::cin >> port;
+        RunServer(port);
+    }
+    else if (mode == 2) // クライアントモード
+    {
+        char server_ip[16];
+        u_short port;
+        printf("接続先のサーバーIPアドレスを入力してください: ");
+        std::cin >> server_ip;
+        printf("接続先のポート番号を入力してください: ");
+        std::cin >> port;
+        RunClient(server_ip, port);
+    }
+    else
+    {
+        printf("無効なモードです\n");
+    }
 
-	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
-	{
-		std::cerr << "WinSockの初期化に失敗 エラーコード: " << WSAGetLastError() << std::endl;
+    WSACleanup();
+    return 0;
+}
 
-		return 1;
-	}
+// サーバーの実行関数
+void RunServer(u_short port)
+{
+    SOCKET server_socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_socket == INVALID_SOCKET)
+    {
+        printf("ソケットの作成に失敗しました\n");
+        return;
+    }
 
-	std::cout << "WinSockが初期化されました..." << std::endl;
+    sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(port);
 
-	// クライアントソケットの初期化 //
-	if ((clinet_socket = socket(AF_INET, SOCK_STREAM, 0)) == INVALID_SOCKET)
-	{
-		std::cerr << "ソケットの作成に失敗..." << WSAGetLastError() << std::endl;
+    if (bind(server_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) == SOCKET_ERROR)
+    {
+        printf("ソケットのバインドに失敗しました\n");
+        closesocket(server_socket);
+        return;
+    }
 
-		return 1;
-	}
+    if (listen(server_socket, 5) == SOCKET_ERROR)
+    {
+        printf("ソケットのリッスンに失敗しました\n");
+        closesocket(server_socket);
+        return;
+    }
 
-	std::cout << "ソケットを作成" << std::endl;
+    printf("クライアントからの接続を待っています...\n");
 
-	// サーバのIPアドレスとポートをバインド //
-	std::cout << "接続先のサーバのIPを入力してください: ";
-	std::cin.getline(server_ip, 16);
-	std::cout << "接続先のサーバのポートを入力してください: ";
-	std::cin >> server_port;
-	std::cin.ignore();
-	
-	server_addr.sin_family = AF_INET;
-	server_addr.sin_port = htons(server_port);
+    sockaddr_in client_addr;
+    int client_addr_len = sizeof(client_addr);
+    SOCKET client_socket = accept(server_socket, (struct sockaddr*)&client_addr, &client_addr_len);
+    if (client_socket == INVALID_SOCKET)
+    {
+        printf("クライアントの接続に失敗しました\n");
+        closesocket(server_socket);
+        return;
+    }
 
-	wchar_t wc_server_ip[16];
-	size_t converted_chars = 0;
+    printf("クライアントと接続しました\n");
 
-	if (mbstowcs_s(&converted_chars, wc_server_ip, 16, server_ip, _TRUNCATE) != 0)
-	{
-		std::cerr << "IPアドレスの変換に失敗しました " << std::endl;
-		closesocket(clinet_socket);
-		WSACleanup();
+    while (true)
+    {
+        char recv_buf[1024] = { 0 };
+        int nRcv = recv(client_socket, recv_buf, sizeof(recv_buf) - 1, 0);
 
-		return 1;
-	}
+        if (nRcv == SOCKET_ERROR || nRcv == 0)
+        {
+            printf("クライアントとの接続が切れました\n");
+            break;
+        }
 
-	// IPアドレスをバイナリ形式に変換して設定
-	if (InetPton(AF_INET, wc_server_ip, &server_addr.sin_addr) <= 0)
-	{
-		std::cerr << "IPアドレスの設定に失敗しました" << std::endl;
-		closesocket(clinet_socket);
-		WSACleanup();
+        recv_buf[nRcv] = '\0';
+        printf("クライアント --> %s\n", recv_buf);
 
-		return 1;
-	}
+        printf("サーバー --> ");
+        char send_buf[1024] = { 0 };
+        std::cin >> send_buf;
 
-	// サーバに接続
-	if (connect(clinet_socket, (sockaddr*)&server_addr, sizeof(server_addr)) < 0)
-	{
-		std::cerr << "サーバ接続に失敗 エラーコード : " << WSAGetLastError() << std::endl;
-		closesocket(clinet_socket);
-		WSACleanup();
+        int nSent = send(client_socket, send_buf, (int)strlen(send_buf), 0);
+        if (nSent == SOCKET_ERROR)
+        {
+            printf("データの送信に失敗しました\n");
+            break;
+        }
+    }
 
-		return 1;
-	}
+    closesocket(client_socket);
+    closesocket(server_socket);
+}
 
-	std::cout << "サーバに接続 (終了する場合は'quit'を入力してください)" << std::endl;
+// クライアントの実行関数
+void RunClient(const char* server_ip, u_short port)
+{
+    SOCKET client_socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (client_socket == INVALID_SOCKET)
+    {
+        printf("ソケットの作成に失敗しました\n");
+        return;
+    }
 
-	// メッセージ処理を抜け出すまでチャットを更新
-	while (true)
-	{
-		std::cout << "送信するメッセージを入力してください: ";
-		std::cin.getline(buffer, 1024);
+    sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = inet_addr(server_ip);
+    server_addr.sin_port = htons(port);
 
-		// quitを入力したら接続を終了
-		if (strcmp(buffer, "quit") == 0)
-		{
-			std::cout << "サーバ接続を終了" << std::endl;
-			break;
-		}
+    if (connect(client_socket, (struct sockaddr*)&server_addr, sizeof(server_addr)) == SOCKET_ERROR)
+    {
+        printf("サーバーへの接続に失敗しました\n");
+        closesocket(client_socket);
+        return;
+    }
 
-		// サーバにメッセージを送信
-		if (send(clinet_socket, buffer, strlen(buffer), 0) < 0)
-		{
-			std::cerr << "メッセージの送信に失敗: " << WSAGetLastError() << std::endl;
-			break;
-		}
+    printf("サーバーに接続しました\n");
 
-		// メッセージの受信
-		int recv_size = recv(clinet_socket, buffer, 1024, 0);
+    while (true)
+    {
+        printf("クライアント --> ");
+        char send_buf[1024] = { 0 };
+        std::cin >> send_buf;
 
-		if (recv_size == SOCKET_ERROR)
-		{
-			std::cerr << "メッセージの受信に失敗 エラーコード: " << WSAGetLastError() << std::endl;
-			break;
-		}
-		else if (recv_size == 0)
-		{
-			std::cout << "サーバが切断されました" << std::endl;
-			break;
-		}
+        int nSent = send(client_socket, send_buf, (int)strlen(send_buf), 0);
+        if (nSent == SOCKET_ERROR)
+        {
+            printf("データの送信に失敗しました\n");
+            break;
+        }
 
-		buffer[recv_size] = '\0';
+        char recv_buf[1024] = { 0 };
+        int nRcv = recv(client_socket, recv_buf, sizeof(recv_buf) - 1, 0);
+        if (nRcv == SOCKET_ERROR || nRcv == 0)
+        {
+            printf("サーバーとの接続が切れました\n");
+            break;
+        }
 
-		std::cout << "サーバからのメッセージ: " << buffer << std::endl;
-	}
+        recv_buf[nRcv] = '\0';
+        printf("サーバー --> %s\n", recv_buf);
+    }
 
-	// ソケットの終了
-	closesocket(clinet_socket);
-
-	WSACleanup();
-
-	return 0;
+    closesocket(client_socket);
 }
